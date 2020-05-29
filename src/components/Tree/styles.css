@@ -1,0 +1,11 @@
+.tree-node .tree-node {
+  padding-left: 30px;
+}
+
+.half-check::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-color: #0075FF;
+}
