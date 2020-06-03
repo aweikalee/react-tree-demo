@@ -45,7 +45,7 @@ db.push(n({ pid, checked: true }), n({ pid }))
     while (queue.length) {
       const cur = queue.shift()!
       const pid = cur.id
-      const children = [n({ pid, loadData: true }), n({ pid, disabled: true })]
+      const children = [n({ pid }), n({ pid, disabled: true })]
       newQueue.push(...children)
       db.push(...children)
     }
