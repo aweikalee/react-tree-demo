@@ -1,21 +1,22 @@
 import React, { useEffect } from 'react'
-import { isTreeNode } from './TreeNode'
-import { IToChildren } from './useRelationMap'
-import { NodeId, Checked, Disabled, CheckedState, TreeProps } from './types'
+import {
+  createNearestChildrenMap,
+  inferChecked,
+  filterChildren,
+  setCheckedMap,
+  popEmpty,
+} from './utils'
+import { Checked, Disabled, TreeProps, TreeNodeElement } from './types'
+import { useStateRef } from '../../utils'
 
-type ISetState = {
+export type IValidateCheckedProps = {
+  checked: Checked
+  disabled: Disabled
+  onChecked: TreeProps['onChecked']
   setCheckedState: React.Dispatch<React.SetStateAction<Checked>>
+  children: TreeNodeElement[]
+  toNearestChildren: ReturnType<typeof createNearestChildrenMap>
 }
-type IRef = {
-  checkedRef: React.MutableRefObject<Checked>
-  disabledRef: React.MutableRefObject<Disabled>
-  onCheckedRef: React.MutableRefObject<TreeProps['onChecked']>
-}
-export type IValidateCheckedProps = ISetState &
-  IRef & {
-    children: React.ReactNode
-    toChildren: IToChildren
-  }
 
 /**
  * 验证父子 checked 的有效性，并更正
@@ -30,67 +31,64 @@ export function useValidateChecked(
   props: IValidateCheckedProps
 ) {
   const {
-    checkedRef,
-    disabledRef,
-    children,
-    toChildren,
-    onCheckedRef,
+    checked,
+    disabled,
+    onChecked,
     setCheckedState,
+    children,
+    toNearestChildren,
   } = props
+
+  const checkedRef = useStateRef(checked)
+  const disabledRef = useStateRef(disabled)
+  const onCheckedRef = useStateRef(onChecked)
 
   useEffect(() => {
     if (!active) return
-    const checked = { ...checkedRef.current }
+    const newChecked = { ...checkedRef.current }
     const disabled = disabledRef.current
+    const onChecked = onCheckedRef.current
 
     // 自上而下 将全选的子项设为2
-    const queue =
-      React.Children.map(children, (v) => {
-        if (!isTreeNode(v)) return null
-        return v.props.nodeId
-      })?.filter((v) => v !== null) || []
-    const stack: NodeId[] = []
+    const queue = filterChildren(
+      children,
+      (child) => !disabled[child.props.nodeId],
+      (child) => !disabled[child.props.nodeId]
+    )
+    const stack: TreeNodeElement[] = []
+    for (let i = 0; i < queue.length; i += 1) {
+      const cur = queue[i]
+      const id = cur.props.nodeId
+      const level = cur.props.level!
+      if (stack.length > level) {
+        stack.splice(level)
+        popEmpty(stack)
+      }
+      const parent = stack[stack.length - 1]
 
-    while (queue.length) {
-      const cur = queue.shift()!
-      const childIds = toChildren.get(cur)
-      if (!childIds) continue
-      if (!disabled[cur]) stack.push(cur)
-
-      childIds.forEach((v) => {
-        if (checked[cur] === 2 && !disabled[v]) {
-          checked[v] = 2
-        }
-
-        queue.push(v)
-      })
+      if (parent !== undefined) {
+        const pid = parent.props.nodeId
+        if (newChecked[pid] === 2) setCheckedMap(newChecked, id, 2)
+      }
+      stack[level] = cur
     }
 
     // 自下而上 将非全选父项改为0或1
-    while (stack.length) {
-      const cur = stack.pop()!
-      const childIds = toChildren.get(cur)?.filter((v) => !disabled[v])
-      if (!(childIds && childIds.length)) continue
+    toNearestChildren.forEach((nearestChildren, pid) => {
+      const children = nearestChildren.filter((v) => !disabled[v.props.nodeId])
+      if (!(children && children.length)) return
+      const state = inferChecked(newChecked, children)
+      if (state !== undefined) setCheckedMap(newChecked, pid, state)
+    })
 
-      let state: CheckedState = 1
-
-      if (childIds.every((v) => checked[v] === 2)) {
-        state = 2
-      } else if (childIds.every((v) => !checked[v])) {
-        state = 0
-      }
-
-      checked[cur] = state
-
-      setCheckedState(checked)
-      onCheckedRef.current && onCheckedRef.current(checked, checkedRef.current)
-    }
+    setCheckedState(newChecked)
+    onChecked?.(newChecked, checkedRef.current)
   }, [
     active,
+    children,
+    toNearestChildren,
     checkedRef,
     disabledRef,
-    children,
-    toChildren,
     onCheckedRef,
     setCheckedState,
   ])

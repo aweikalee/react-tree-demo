@@ -1,9 +1,13 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { Checked, Disabled, Expanded, TreeProps } from './types'
 import { TreeContext, useTreeContext } from './useTreeContext'
-import { usePropsState, useStateRef } from '../../utils'
-import { useRelationMap } from './useRelationMap'
 import { useValidateChecked } from './useValidateChecked'
+import {
+  flatChildren as flat,
+  filterChildren,
+  createNearestChildrenMap,
+} from './utils'
+import { usePropsState } from '../../utils'
 
 import './styles.css'
 
@@ -24,21 +28,20 @@ const Component: React.FC<TreeProps> = (props) => {
   const [disabled] = usePropsState<Disabled>({}, disabledProp)
   const [expanded, setExpandedState] = usePropsState<Expanded>({}, expandedProp)
 
-  const checkedRef = useStateRef(checked)
-  const disabledRef = useStateRef(disabled)
-  const onCheckedRef = useStateRef(onChecked)
-
-  /* 父子索引 */
-  const { toChildren, toParent } = useRelationMap(children)
+  const flatChildren = useMemo(() => flat(children), [children])
+  const toNearestChildren = useMemo(
+    () => createNearestChildrenMap(flatChildren),
+    [flatChildren]
+  )
 
   /* 验证 checked 有效性 */
   useValidateChecked(validateChecked, {
-    checkedRef,
-    disabledRef,
-    onCheckedRef,
+    checked,
+    disabled,
+    onChecked,
     setCheckedState,
-    toChildren,
-    children,
+    children: flatChildren,
+    toNearestChildren,
   })
 
   const context = useTreeContext({
@@ -53,13 +56,20 @@ const Component: React.FC<TreeProps> = (props) => {
     setCheckedState,
     setExpandedState,
 
-    toChildren,
-    toParent,
+    children: flatChildren,
+    toNearestChildren,
   })
+
+  /* 筛选未被展开的子项 */
+  const visiabledChildren = useMemo(() => {
+    return filterChildren(flatChildren, (child) => {
+      return expanded[child.props.nodeId] || false
+    })
+  }, [expanded, flatChildren])
 
   return (
     <TreeContext.Provider value={context}>
-      <div>{children}</div>
+      <div>{visiabledChildren}</div>
     </TreeContext.Provider>
   )
 }

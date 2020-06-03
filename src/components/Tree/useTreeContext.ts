@@ -1,12 +1,24 @@
 import React, { useCallback, useMemo } from 'react'
-import { useRelationMap, getChildIds, getParentIds } from './useRelationMap'
 import {
   TreeProps,
   TreeContext as ITreeContext,
   Checked,
   Expanded,
   CheckedState,
+  NodeId,
+  TreeNodeElement,
 } from './types'
+import {
+  filterChildren,
+  indexOfChild,
+  getChildren,
+  getParents,
+  inferChecked,
+  createNearestChildrenMap,
+  setExpandedMap,
+  setCheckedMap,
+} from './utils'
+import { useStateRef } from '../../utils'
 
 type IState = 'checked' | 'disabled' | 'expanded'
 type IRequire<T extends TreeProps> = {
@@ -18,8 +30,10 @@ type ISetState = {
 }
 type IProps<T extends TreeProps> = Omit<T, IState> &
   IRequire<T> &
-  ISetState &
-  ReturnType<typeof useRelationMap>
+  ISetState & {
+    children: TreeNodeElement[]
+    toNearestChildren: ReturnType<typeof createNearestChildrenMap>
+  }
 
 export type ITreeContextProps = IProps<TreeProps>
 
@@ -37,10 +51,21 @@ export function useTreeContext(props: ITreeContextProps) {
 
     setCheckedState,
     setExpandedState,
-
-    toChildren,
-    toParent,
+    children,
+    toNearestChildren,
   } = props
+
+  const checkedRef = useStateRef(checked)
+  const disabledRef = useStateRef(disabled)
+  const expandedRef = useStateRef(expanded)
+
+  const onCheckedRef = useStateRef(onChecked)
+  const onExpandedRef = useStateRef(onExpanded)
+  const onNodeCheckedRef = useStateRef(onNodeChecked)
+  const onNodeExpandedRef = useStateRef(onNodeExpanded)
+
+  const childrenRef = useStateRef(children)
+  const toNearestChildrenRef = useStateRef(toNearestChildren)
 
   const getCheckedState: ITreeContext['getCheckedState'] = useCallback(
     (id) => checked[id] || 0,
@@ -59,86 +84,116 @@ export function useTreeContext(props: ITreeContextProps) {
 
   const toggleExpanded: ITreeContext['toggleExpanded'] = useCallback(
     (id) => {
-      const newExpanded = { ...expanded }
-      if (expanded[id] === true) {
-        delete newExpanded[id]
-      } else {
-        newExpanded[id] = true
-      }
+      const expanded = expandedRef.current
+      const onExpanded = onExpandedRef.current
+      const onNodeExpanded = onNodeExpandedRef.current
 
-      onNodeExpanded && onNodeExpanded(id, newExpanded[id])
+      const newExpanded = { ...expanded }
+      setExpandedMap(newExpanded, id, newExpanded[id] !== true)
+      onNodeExpanded?.(id, newExpanded[id])
       setExpandedState(newExpanded)
-      onExpanded && onExpanded(newExpanded, expanded)
+      onExpanded?.(newExpanded, expanded)
     },
-    [expanded, onNodeExpanded, setExpandedState, onExpanded]
+    [expandedRef, onNodeExpandedRef, onExpandedRef, setExpandedState]
   )
 
   const toggleChecked: ITreeContext['toggleChecked'] = useCallback(
     (id) => {
+      const children = childrenRef.current
+      const toNearestChildren = toNearestChildrenRef.current
+      const checked = checkedRef.current
+      const disabled = disabledRef.current
+      const onChecked = onCheckedRef.current
+      const onNodeChecked = onNodeCheckedRef.current
+      const isDisabled = (id: NodeId) => disabled[id] === true
+
       if (isDisabled(id)) return
+      const index = indexOfChild(id, children)
+      if (index === -1) return
+
       const newChecked = { ...checked }
-      const children = getChildIds(id, toChildren)
-      const parents = getParentIds(id, toParent)
 
       // 自身状态
       const newCheckState: CheckedState = checked[id] === 2 ? 0 : 2
-      newChecked[id] = newCheckState
-      onNodeChecked && onNodeChecked(id, 2)
+      setCheckedMap(newChecked, id, newCheckState)
+      onNodeChecked?.(id, 2)
 
       // 子项状态
-      children.forEach((id) => {
+      const theChildren = getChildren(id, children)
+      filterChildren(
+        theChildren,
+        (child) => !isDisabled(child.props.nodeId),
+        (child) => !isDisabled(child.props.nodeId)
+      ).forEach((child) => {
+        const id = child.props.nodeId
         if (isDisabled(id)) return
-        newChecked[id] = newCheckState
-        onNodeChecked && onNodeChecked(id, 2)
+        setCheckedMap(newChecked, id, newCheckState)
+        onNodeChecked?.(id, 2)
       })
 
       // 父项状态
-      parents.forEach((id) => {
-        if (isDisabled(id)) return
-        const children = toChildren.get(id)?.filter((v) => !isDisabled(v))
+      const theParents = getParents(id, children)
+      for (let i = 0; i < theParents.length; i += 1) {
+        const parent = theParents[i]
+        const id = parent.props.nodeId
+        if (isDisabled(id)) break
 
+        const nearestChildren = toNearestChildren
+          .get(id)
+          ?.filter((child) => !isDisabled(child.props.nodeId))
         const oldState = newChecked[id] || 0
-        let state: CheckedState = 1
+        const state = inferChecked(newChecked, nearestChildren || [])
+        if (state === undefined || oldState === state) break
 
-        if (children?.length) {
-          if (children.every((v) => newChecked[v] === 2)) {
-            state = 2
-          } else if (children.every((v) => !newChecked[v])) {
-            state = 0
-          }
-        } else {
-          state = oldState
-        }
-
-        if (oldState !== state) {
-          newChecked[id] = state
-          onNodeChecked && onNodeChecked(id, state)
-        }
-      })
+        setCheckedMap(newChecked, id, state)
+        onNodeChecked?.(id, state)
+      }
 
       setCheckedState(newChecked)
-      onChecked && onChecked(newChecked, checked)
+      onChecked?.(newChecked, checked)
     },
     [
-      checked,
-      toChildren,
-      toParent,
-      onChecked,
-      onNodeChecked,
+      childrenRef,
+      toNearestChildrenRef,
+      checkedRef,
+      disabledRef,
+      onCheckedRef,
+      onNodeCheckedRef,
       setCheckedState,
-      isDisabled,
     ]
   )
 
-  const context = useMemo(
+  const isExpandable = useCallback(
+    (id: NodeId) => {
+      const index: number = indexOfChild(id, children)
+      if (index === -1) return false
+      const cur = children[index]
+      const _children = React.Children.toArray(cur.props.children)
+      if (_children.some((v) => v)) return true
+      const next = children[index + 1]
+      if (!next) return false
+      return cur.props.level! < next.props.level!
+    },
+    [children]
+  )
+
+  const context: ITreeContext = useMemo(
     () => ({
       getCheckedState,
       isDisabled,
       isExpanded,
       toggleExpanded,
       toggleChecked,
+      isExpandable,
     }),
-    [getCheckedState, isDisabled, isExpanded, toggleExpanded, toggleChecked]
+    [
+      getCheckedState,
+      isDisabled,
+      isExpanded,
+      toggleExpanded,
+      toggleChecked,
+      isExpandable,
+    ]
   )
 
   return context

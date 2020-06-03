@@ -1,6 +1,7 @@
+import { CheckedState as CheckedStateBase } from '../Checkbox/types'
 export type NodeId = string
 
-export type CheckedState = 0 | 1 | 2 // 0不选, 1半选, 2全选
+export type CheckedState = CheckedStateBase
 export type DisabledState = boolean
 export type ExpandedState = boolean
 
@@ -14,6 +15,7 @@ export type Expanded = IMap<NodeId, ExpandedState>
 export interface TreeContext {
   isDisabled?: (id: NodeId) => DisabledState
   isExpanded?: (id: NodeId) => ExpandedState
+  isExpandable?: (id: NodeId) => ExpandedState
   getCheckedState?: (id: NodeId) => CheckedState
   toggleExpanded?: (id: NodeId) => void
   toggleChecked?: (id: NodeId) => void
@@ -33,4 +35,9 @@ export interface TreeProps {
 export interface TreeNodeProps extends React.HTMLAttributes<HTMLDivElement> {
   nodeId: NodeId
   name: React.ReactNode
+  level?: number
 }
+
+export type TreeNodeElement = React.ReactElement<
+  React.PropsWithChildren<TreeNodeProps>
+>
